@@ -20,13 +20,41 @@
 #include <unistd.h> // read(), write(), close()
 #define MAX 80
 #define PORT 8228
-#define SA struct sockaddr
 
+#include <hiredis.h>
+#include <time.h>
 
 static void close_connection(PGconn *dbconn)
 {
     PQfinish(dbconn);
     exit(1);
+}
+
+redisContext* redisConnection(const char *hostname){
+
+	redisReply *reply;
+	redisContext *c;
+
+	c = redisConnectUnixWithTimeout(hostname, timeout);
+
+	if (c == NULL || c->err) {
+
+	if (c) {
+	    printf("Connection error: %s\n", c->errstr);
+	    redisFree(c);
+	} else {
+	    printf("Connection error: can't allocate redis context\n");
+	}
+
+	exit(1);
+	}
+
+	/* PING server */
+	reply = redisCommand(c, "PING");
+	printf("PING: %s\n", reply->str);
+	freeReplyObject(reply);
+
+	return c;
 }
 
 int main(int argc, char const** argv)
@@ -40,54 +68,30 @@ int main(int argc, char const** argv)
 
 	PGresult *query;
 	query = PQexec(dbconn, "SELECT pg_catalog.set_config('search_path', '', false)");
-	if (PQresultStatus(query) != PGRES_TUPLES_OK)
-    {
-        fprintf(stderr, "SET failed: %s", PQerrorMessage(dbconn));
-        PQclear(query);
+	if (PQresultStatus(query) != PGRES_TUPLES_OK) {
+		fprintf(stderr, "SET failed: %s", PQerrorMessage(dbconn));
+		PQclear(query);
 		close_connection(dbconn);        
-    }
+	}
 	PQclear(query);
 
 	query = PQexec(dbconn, "LISTEN tbl2");
-    if (PQresultStatus(query) != PGRES_COMMAND_OK)
-    {
-        fprintf(stderr, "LISTEN command failed: %s\n", PQerrorMessage(dbconn));
-        PQclear(query);
+	if (PQresultStatus(query) != PGRES_COMMAND_OK) {
+		fprintf(stderr, "LISTEN command failed: %s\n", PQerrorMessage(dbconn));
+		PQclear(query);
 		close_connection(dbconn);  
-    }
-    PQclear(query);
+	}
+	PQclear(query);
+
+	struct timeval timeout = {1, 500000}; // 1.5 seconds
+	redisReply *reply;
+	redisContext *c = redisConnection("172.18.0.6");
+	int pos=0;
+        char buffer[4096];
 	
-	int sock, rows, cols, i, j, sockfd;
+	int sock, rows, cols, i, j;
 	fd_set reading;	
 	PGnotify   *notify;
-	FILE *fp;
-	struct sockaddr_in servaddr;
-
-	// socket create and verification
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd == -1) {
-          printf("socket creation failed...\n");
-          exit(0);
-        }
-        else        
-	  printf("Socket successfully created..\n");
-
-        bzero(&servaddr, sizeof(servaddr));
-
-	// assign IP, PORT
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_addr.s_addr = inet_addr("172.18.0.2");
-        servaddr.sin_port = htons(PORT);
-
-	// connect the client socket to server socket
-        if (connect(sockfd, (SA*)&servaddr, sizeof(servaddr))!= 0) {
-          printf("connection with the server failed...\n");
-          exit(0);
-        }
-        else
-          printf("connected to the server..\n");
-
-	char* msg = "7:updated,";
 
 	while(1){
 
@@ -110,8 +114,10 @@ int main(int argc, char const** argv)
 			PQfreemem(notify);			
 			PQconsumeInput(dbconn);
 		}
+                
+		//SELECT * FROM billing_service (view)
+		query = PQexec(dbconn, "SELECT customer, credit, max_time FROM public.billing_service");			
 
-		query = PQexec(dbconn, "SELECT reg_exp, group_id FROM public.re_grp");			
 		if (PQresultStatus(query) != PGRES_TUPLES_OK)
 		{
 			fprintf(stderr, "Error while executing the query: %s\n", PQerrorMessage(dbconn));
@@ -122,84 +128,31 @@ int main(int argc, char const** argv)
 		rows = PQntuples(query);
 		cols = PQnfields(query);
 
-		// fp = fopen("/etc/kamailio/dbtext/re_grp_temp", "w");
-		fp = fopen("/etc/kamailio/dbtext/re_grp", "w");
-
-		/*for (i = 0; i < cols; i++) {
-			fprintf(fp,"%s ", PQfname(query, i));
-		}*/
-
-		fprintf(fp,"%s ", "reg_exp(string) group_id(int)");
-		fprintf(fp,"\n");
+		reply = redisCommand(c,"SELECT 1");
+		printf("SELECT db: %s\n", reply->str);
 
 		for (i = 0; i < rows; i++) {
-			for (j = 0; j < cols; j++) {            
-				fprintf(fp,"%s|", PQgetvalue(query, i, j));
-			}
-			fprintf(fp,"\n");
-		}
 
-		fclose(fp);		
+		 	pos=sprintf(buffer+pos,"HMSET cnxcc:%lu ",i);
+			pos+=sprintf(buffer+pos,"customer %s ", PQgetvalue(query,i,0));
+			pos+=sprintf(buffer+pos,"credit %lu ", PQgetvalue(query,i,1));
+			pos+=sprintf(buffer+pos,"max_time %lu ", PQgetvalue(query,i,2));
+
+			redisCommand(c,buffer);
+
+			pos=0;
+			buffer[0]='\0';
+		}
 		
 		PQclear(query);
-
-		query = PQexec(dbconn, "SELECT setid, destination, flags, priority, attrs FROM public.dispatcher");
-		if (PQresultStatus(query) != PGRES_TUPLES_OK)
-		{
-			fprintf(stderr, "Error while executing the query: %s\n", PQerrorMessage(dbconn));
-			PQclear(query);
-			close_connection(dbconn);  
-		}
-
-		rows = PQntuples(query);
-		cols = PQnfields(query);
-
-		// fp = fopen("/etc/kamailio/dbtext/dispatcher_temp", "w");
-		fp = fopen("/etc/kamailio/dbtext/dispatcher", "w");
-
-		/*for (i = 0; i < cols; i++) {
-			fprintf(fp,"%s ", PQfname(query, i));
-		}*/
-
-		fprintf(fp,"%s ", "setid(int) destination(string) flags(int) priority(int) attrs(string)");
-		fprintf(fp,"\n");
-
-		for (i = 0; i < rows; i++) {
-			for (j = 0; j < cols; j++) {            
-				fprintf(fp,"%s|", PQgetvalue(query, i, j));
-			}
-			fprintf(fp,"\n");
-		}
-
-		fclose(fp);
-
-		PQclear(query);
-
-		// rename("/etc/kamailio/dbtext/dispatcher_temp", "/etc/kamailio/dbtext/dispatcher");
-		// rename("/etc/kamailio/dbtext/re_grp_temp", "/etc/kamailio/dbtext/re_grp");
-
-		//no need to rename files - write on it directly - core just read data from cache 		
-		//run linux command from c code
-		//call kamcmd -s udp:172.18.0.2:3000 db_text.query 'select * from dispatcher'
-		//call kamcmd -s udp:172.18.0.2:3000 db_text.query 'select * from re_grp'
-		//mechanism used to update cache
-		//system("kamcmd -s udp:172.18.0.2:3000 htable.reload ha_re_grp");
-		//system("kamcmd -s udp:172.18.0.2:3000 htable.reload ha_dispatcher");
-
-		//write(sockfd, msg, strlen(msg));
-		// Send the message to server:
-    		if(send(sockfd, msg, strlen(msg), 0) < 0){
-        		printf("Unable to send message\n");
-        		return -1;
-      		}
 	}
 
 	fprintf(stderr, "Done.\n");
 
 	PQfinish(dbconn);
 
-	// close the socket
-        close(sockfd);
+	freeReplyObject(reply);
+	redisFree(c);
 	
 	return 0;
 }
