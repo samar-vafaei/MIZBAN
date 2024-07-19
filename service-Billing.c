@@ -34,8 +34,10 @@ redisContext* redisConnection(const char *hostname){
 
 	redisReply *reply;
 	redisContext *c;
+	struct timeval timeout = {1, 500000}; 
 
-	c = redisConnectUnixWithTimeout(hostname, timeout);
+	//c = redisConnectUnixWithTimeout(hostname, timeout);
+	c = redisConnect("172.18.0.6", 6379);
 
 	if (c == NULL || c->err) {
 
@@ -83,9 +85,13 @@ int main(int argc, char const** argv)
 	}
 	PQclear(query);
 
-	struct timeval timeout = {1, 500000}; // 1.5 seconds
 	redisReply *reply;
-	redisContext *c = redisConnection("172.18.0.6");
+	const char *hostname = "172.18.0.6";
+	redisContext *c = redisConnection(hostname);
+
+	reply = redisCommand(c,"SELECT 1");
+	printf("SELECT db: %s\n", reply->str);
+
 	int pos=0;
         char buffer[4096];
 	
@@ -128,15 +134,12 @@ int main(int argc, char const** argv)
 		rows = PQntuples(query);
 		cols = PQnfields(query);
 
-		reply = redisCommand(c,"SELECT 1");
-		printf("SELECT db: %s\n", reply->str);
-
 		for (i = 0; i < rows; i++) {
 
 		 	pos=sprintf(buffer+pos,"HMSET cnxcc:%lu ",i);
 			pos+=sprintf(buffer+pos,"customer %s ", PQgetvalue(query,i,0));
-			pos+=sprintf(buffer+pos,"credit %lu ", PQgetvalue(query,i,1));
-			pos+=sprintf(buffer+pos,"max_time %lu ", PQgetvalue(query,i,2));
+			pos+=sprintf(buffer+pos,"credit %s ", PQgetvalue(query,i,1));
+			pos+=sprintf(buffer+pos,"max_time %s ", PQgetvalue(query,i,2));
 
 			redisCommand(c,buffer);
 
