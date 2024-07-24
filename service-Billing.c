@@ -136,15 +136,18 @@ int main(int argc, char const** argv)
 
 		for (i = 0; i < rows; i++) {
 
-		 	pos=sprintf(buffer+pos,"HMSET cnxcc:%lu ",i);
-			pos+=sprintf(buffer+pos,"customer %s ", PQgetvalue(query,i,0));
-			pos+=sprintf(buffer+pos,"credit %s ", PQgetvalue(query,i,1));
-			pos+=sprintf(buffer+pos,"max_time %s ", PQgetvalue(query,i,2));
+				sprintf(buffer,"HSET cnxcc:%d customer %s",i,PQgetvalue(query,i,0));
+				redisCommand(c,buffer);
+				buffer[0]='\0';
 
-			redisCommand(c,buffer);
+				sprintf(buffer,"HSET cnxcc:%d credit %s",i,PQgetvalue(query,i,1));
+				redisCommand(c,buffer);
+				buffer[0]='\0';
 
-			pos=0;
-			buffer[0]='\0';
+				sprintf(buffer,"HSET cnxcc:%d max_time %s",i,PQgetvalue(query,i,2));
+				redisCommand(c,buffer);
+				buffer[0]='\0';
+
 		}
 		
 		PQclear(query);
