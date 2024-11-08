@@ -1,24 +1,23 @@
-CREATE VIEW public.billing_service  AS
-	WITH temp AS (	
-		SELECT subscriber.username AS customer, (subscriber.credit-cdr.duration*billing.call_rates) AS credit, billing.call_rates as call_rates
-		FROM subscriber
-		JOIN cdr
-		ON subscriber.username=cdr.from_uri
-		JOIN billing 
-		ON billing.country_code=cdr.to_uri) 
-	SELECT 	customer,
+CREATE VIEW public.billing_service  AS	
+	SELECT subscriber.username AS customer, country_code AS prefix, 
 		CASE
-  			WHEN credit < 0 THEN 0		
-		ELSE
-			credit
-		END, 
-		CASE
-			WHEN credit < 0 THEN 0
+			WHEN RIGHT(LEFT(country_code,4),2)::int=98 THEN 86400			
 		ELSE
 			(credit/call_rates)
-		END  AS max_time FROM temp;
-
-
-
-
+		END  AS max_time 
+	FROM subscriber
+	JOIN billing
+	ON 1=1; 
+	
+		
+		
+		
+		
+			
+		
+	
+	
+	
+	
+		
 
