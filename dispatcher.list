@@ -1,0 +1,4 @@
+# setid(int) destination(sip uri) flags(int,opt) priority(int,opt) attributes(str,opt)
+#9804241810 sip:10.9.1.14:5060
+1 sip:10.9.1.14:5060
+
